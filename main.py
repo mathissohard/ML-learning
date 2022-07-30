@@ -24,9 +24,10 @@ flags.DEFINE_string('exp_name', None,
 FLAGS = flags.FLAGS
 FLAGS.log_dir = './logs'  # directory where to write event logs and output array
 
+
 def main(argv):
     del argv
-    if FLAGS.exp_name is None: # use config name as exp_name
+    if FLAGS.exp_name is None:  # use config name as exp_name
         FLAGS.exp_name = os.path.splitext(os.path.basename(FLAGS.config_path))[0]
     with open(FLAGS.config_path) as json_data_file:
         config = json.load(json_data_file)
@@ -38,8 +39,9 @@ def main(argv):
     sample = config.train_config.sample_type
     scheme = config.train_config.scheme
     TD = config.train_config.TD_type
+    N = config.eqn_config.num_time_interval_critic
     train = config.train_config.train
-    
+
     if not os.path.exists(FLAGS.log_dir):
         os.mkdir(FLAGS.log_dir)
     path_prefix = os.path.join(FLAGS.log_dir, FLAGS.exp_name)
@@ -50,23 +52,25 @@ def main(argv):
 
     absl_logging.get_absl_handler().setFormatter(logging.Formatter('%(levelname)-6s %(message)s'))
     absl_logging.set_verbosity('info')
-            
+
     logging.info('Begin to solve %s ' % config.eqn_config.eqn_name)
     ActorCritic_solver = ActorCriticSolver(config, bsde)
+    training_history, x0, y, true_y, z, true_z, grad_y, x_smp = ActorCritic_solver.train()
 
-    for i in range(3):
-        training_history,x,y, true_y, z, true_z, grad_y = ActorCritic_solver.train()
-    
-        char = sample+"_"+scheme+"_"+TD+"_"+train
-        np.savetxt(str(i) + '_{}_{}.csv'.format(path_prefix,char),
+    char = sample + "_" + scheme + "_" + TD + "_" + train
+    np.savetxt('{}_{}.csv'.format(path_prefix, char),
                training_history,
                fmt=['%d', '%.5e', '%.5e', '%.5e', '%.5e', '%.5e', '%.5e', '%.5e', '%d'],
                delimiter=",",
                header='step, loss_critic, loss_actor, err_value, error_value_infty, err_control, err_value_grad,error_cost2, elapsed_time',
                comments='')
-        figure_data = np.concatenate([x,y, true_y, z, true_z], axis=1)
-        head = ("x,")*dim + "y_NN,y_true," + ("Z_NN,")*control_dim + "z_true" + (",z_true")*(control_dim-1)
-        np.savetxt('{}_{}_hist.csv'.format(path_prefix, char), figure_data, delimiter=",",
-               header=head, comments='')
+    # figure_data = np.concatenate([x0, y, true_y, z, true_z, x_smp], axis=1)
+    #figure_data = np.concatenate([x0, x], axis=1)
+    figure_data = tf.reshape(x_smp[0, :, :], [dim, N + 1])
+    # # head = ("x,") * dim + "y_NN,y_true," + ("Z_NN,") * control_dim + "z_true" + (",z_true") * (control_dim - 1)
+    # head = ("x,") * dim
+    np.savetxt('{}_{}_hist.csv'.format(path_prefix, char), figure_data, delimiter=",",
+                comments='')
 if __name__ == '__main__':
+    # 执行程序中main函数，并解析命令行参数！
     app.run(main)
