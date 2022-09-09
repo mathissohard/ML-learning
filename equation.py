@@ -8,23 +8,36 @@ class Equation(object):
         self.dim = eqn_config.dim
         self.gamma = eqn_config.discount
         self.R = eqn_config.R
+        self.R_0 = eqn_config.R_0
         self.control_dim = eqn_config.control_dim
         
     def sample_normal(self, num_sample, N): #normal sample for BM
-        r_Sample = np.random.uniform(low=0, high=self.R, size=[num_sample,1])
-        r = r_Sample**(1 / self.dim) * (self.R**((self.dim- 1) / self.dim ))
+        # r_Sample = np.random.uniform(low=0, high=self.R, size=[num_sample,1])
+        # r = r_Sample**(1 / self.dim) * (self.R**((self.dim- 1) / self.dim ))
+        # angle = normal.rvs(size=[num_sample, self.dim])
+        # norm = np.sqrt(np.sum(angle**2, 1, keepdims=True))
+        # x0 = r * angle / norm
+        # dw_sample = normal.rvs(size=[num_sample, self.dim, N])# * sqrt_delta_t
+        # x_bdry = normal.rvs(size=[num_sample, self.dim])
+        # norm = np.sqrt(np.sum(np.square(x_bdry), 1, keepdims=True))
+        # x_bdry = self.R * x_bdry / norm
+        # return x0, dw_sample, x_bdry
+        r_Sample = np.random.uniform(low=0, high=self.R_0, size=[num_sample, 1])
+        r = r_Sample ** (1 / self.dim) * (self.R_0 ** ((self.dim - 1) / self.dim))
         angle = normal.rvs(size=[num_sample, self.dim])
-        norm = np.sqrt(np.sum(angle**2, 1, keepdims=True))
-        x0 = r * angle / norm
-        dw_sample = normal.rvs(size=[num_sample, self.dim, N])# * sqrt_delta_t
+        norm = np.sqrt(np.sum(angle ** 2, 1, keepdims=True))
+        x0 = r * angle / norm - 1
+        x0[:, 1] = x0[:, 1] + 1
+        dw_sample = normal.rvs(size=[num_sample, self.dim, N])  # * sqrt_delta_t
+        # x_bry是在T时刻边界上的点
         x_bdry = normal.rvs(size=[num_sample, self.dim])
         norm = np.sqrt(np.sum(np.square(x_bdry), 1, keepdims=True))
-        x_bdry = self.R * x_bdry / norm
+        x_bdry = self.R_0 * x_bdry / norm + 1
         return x0, dw_sample, x_bdry
-    
+
     def sample_bounded(self, num_sample, N): #bdd sample for BM
         r_Sample = np.random.uniform(low=0, high=self.R, size=[num_sample,1])
-        r = r_Sample**(1 / self.dim) * (self.R**((self.dim- 1) / self.dim ))
+        r = r_Sample**(1 / self.dim) * (self.R**((self.dim - 1) / self.dim ))
         angle = normal.rvs(size=[num_sample, self.dim])
         norm = np.sqrt(np.sum(angle**2, 1, keepdims=True))
         x0 = r * angle / norm
@@ -36,11 +49,11 @@ class Equation(object):
         return x0, dw_sample, x_bdry
     
     def sample0(self, num_sample, N):
-        x0 = np.zeros(shape=[num_sample, self.dim]) + 0.01
+        x0 = np.zeros(shape=[num_sample, self.dim]) + 0.01 - 1
         dw_sample = normal.rvs(size=[num_sample, self.dim, N])
         x_bdry = normal.rvs(size=[num_sample, self.dim])
         norm = np.sqrt(np.sum(np.square(x_bdry), 1, keepdims=True))
-        x_bdry = self.R * x_bdry / norm
+        x_bdry = self.R_0 * x_bdry / norm
         return x0, dw_sample, x_bdry
         
     def propagate_naive(self, num_sample, x0, dw_sample, NN_control, training, T, N, cheat):
@@ -55,7 +68,8 @@ class Equation(object):
                 u_i = self.u_true(x_i)
             else:
                 u_i = NN_control(x_i, training, need_grad=False)
-            delta_x = self.drift(x_i, u_i) * delta_t + self.diffusion(x_i, u_i, dw_sample[:, :, i], num_sample) * sqrt_delta_t
+            # delta_x = self.drift(x_i, u_i) * delta_t + self.diffusion(x_i, u_i, dw_sample[:, :, i], num_sample) * sqrt_delta_t
+            delta_x = self.drift(x_i, u_i) * delta_t + self.diffusion(x_i, u_i, dw_sample[:, :, i], num_sample)
             x_iPlus1_temp = x_i + delta_x
             Exit = self.b_tf(x_iPlus1_temp) #Exit>=0 means out
             Exit = tf.reshape(tf.math.ceil((tf.math.sign(Exit)+1)/2), [num_sample]) #1 for Exit>=0, 0 for Exit<0
@@ -75,7 +89,7 @@ class Equation(object):
         delta_t = T / N
         x_smp = tf.reshape(x0, [num_sample, self.dim, 1])
         x_i = x0
-        x0_norm = tf.sqrt(tf.reduce_sum(x0**2,1))
+        x0_norm = tf.sqrt(tf.reduce_sum(x0**2, 1))
         #temp: 2 for inside (inner); 0 (and 1) for boundary layer; -2 (and -1) for outside
         temp = tf.sign(self.R - x0_norm - self.sigma_Up*np.sqrt(3 * self.dim * delta_t)) + tf.sign(self.R - x0_norm)
         #flag: 2 for inside; 1 means step size need modification; 0 means boundary, but we will move for at least a first step.
@@ -151,29 +165,67 @@ class LQR(Equation):
         self.k = ( ((self.gamma**2) * (self.q**2) + 4 * self.p * self.q * (self.beta**2))**0.5 - self.q*self.gamma )/ (self.beta**2) / 2
         self.sigma_Up = np.sqrt(2.0) #upper bound for sigma
         
-    def w_tf(self, x, u): #num_sample * 1
-        return tf.reduce_sum(self.p * tf.square(x) + self.q * tf.square(u), 1, keepdims=True) - 2*self.k*self.dim
+    # def w_tf(self, x, u): #num_sample * 1
+    #     return tf.reduce_sum(self.p * tf.square(x) + self.q * tf.square(u), 1, keepdims=True) - 2*self.k*self.dim
+    #
+    # def Z_tf(self, x): #num_sample * 1
+    #     return 0 * tf.reduce_sum(x, 1, keepdims=True) + self.k * (self.R ** 2)
+    #
+    # def V_true(self, x): #num_sample * 1
+    #     return tf.reduce_sum(tf.square(x), 1, keepdims=True) * self.k
+    #
+    # def u_true(self, x): #num_sample * dim
+    #     return -self.beta * self.k / self.q * x
+    #
+    # def V_grad_true(self, x): #num_sample * dim
+    #     return 2 * self.k * x
+    #
+    # def sigma(self, x, u, num_sample): # x is num_sample x dim, u is num_sample x dim_u, sigma is num_sample x dim x dim_w
+    #     return np.sqrt(2.0) * np.ones([num_sample,1,1]) * np.identity(self.dim)
+    #
+    # def drift(self, x, u):
+    #     return self.beta * u
+    #
+    # def diffusion(self, x, u, dw, num_sample): #sigma num_sample x dim x dim_w, dw is num_sample x dim_w
+    #     return tf.linalg.matvec(self.sigma(x, u, num_sample), dw) # num_sample x dim
+    def w_tf(self, x, u, num_sample, N, T):  # num_sample * 1
+        return tf.reduce_sum(self.q * tf.square(u), 1, keepdims=True)
+        # delta_t = T/N
+        # dw_sample = normal.rvs(size=[num_sample, self.dim])
+        # sqrt_delta_t = np.sqrt(delta_t)
+        # dB = dw_sample * sqrt_delta_t
+        #return tf.reduce_sum(tf.square(dB), 1, keepdims=True)
 
-    def Z_tf(self, x): #num_sample * 1
-        return 0 * tf.reduce_sum(x, 1, keepdims=True) + self.k * (self.R ** 2)
+    def Z_tf(self, x):  # num_sample * 1
+        return 0 * tf.reduce_sum(x, 1, keepdims=True) + tf.cast([[1.0], [0.0]], dtype=tf.float64)   # date modified 7/16
 
-    def V_true(self, x): #num_sample * 1
+    def V_true(self, x):  # num_sample * 1
         return tf.reduce_sum(tf.square(x), 1, keepdims=True) * self.k
 
-    def u_true(self, x): #num_sample * dim
+    def u_true(self, x):  # num_sample * dim
         return -self.beta * self.k / self.q * x
-    
-    def V_grad_true(self, x): #num_sample * dim
+
+    def V_grad_true(self, x):  # num_sample * dim
         return 2 * self.k * x
-    
-    def sigma(self, x, u, num_sample): # x is num_sample x dim, u is num_sample x dim_u, sigma is num_sample x dim x dim_w
-        return np.sqrt(2.0) * np.ones([num_sample,1,1]) * np.identity(self.dim)
-    
+
+    def sigma(self, x, u, num_sample):
+        # x is num_sample x dim, u is num_sample x dim_u, sigma is num_sample x dim x dim_w
+        # u = u.reshape((1024,2,1))
+        return np.sqrt(2.0) * (np.ones([num_sample, 1, 1])) * np.identity(self.dim)
+
     def drift(self, x, u):
-        return self.beta * u
-    
-    def diffusion(self, x, u, dw, num_sample): #sigma num_sample x dim x dim_w, dw is num_sample x dim_w
-        return tf.linalg.matvec(self.sigma(x, u, num_sample), dw) # num_sample x dim
+        #y = tf.cast([[0.0], [0.0]], dtype=tf.float64)
+        # y = x[:, 0] - (x[:, 0]) ** 3 - self.beta * x[:, 0] * (x[:, 1] ** 2)
+        # z = - (1 + x[:, 0] ** 2) * x[:, 1]
+        # y = tf.reshape(y, (-1, 1))
+        # z = tf.reshape(z, (-1, 1))
+        # x = tf.concat([y, z], 1)
+        return x - x ** 3
+
+    def diffusion(self, x, u, dw, num_sample):  # sigma num_sample x dim x dim_w, dw is num_sample x dim_w
+        # return tf.linalg.matvec(self.sigma(x, u, num_sample), dw)  # num_sample x dim
+        return tf.linalg.matvec(self.sigma(x, u, num_sample), u) # num_sample x dim
+
     
     
 class VDP(Equation):
