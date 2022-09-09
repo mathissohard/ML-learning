@@ -2,35 +2,36 @@
   "eqn_config": {
     "_comment": "linear quadratic regulator",
     "eqn_name": "LQR",
-    "total_time_critic": 0.2,
-    "total_time_actor": 0.2,
+    "total_time_critic": 10,
+    "total_time_actor": 10,
     "dim": 2,
     "control_dim": 2,
     "num_time_interval_critic": 50,
     "num_time_interval_actor": 50,
     "discount": 1.0,
     "p": 1.0,
-    "q": 1.0,
-    "beta": 1.0,
-    "R": 1.0
+    "q": 0.5,
+    "beta": 10.0,
+    "R_0": 0.001,
+    "R": 1.5
   },
   "net_config": {
-    "num_hiddens_critic": [200, 200],
-    "num_hiddens_actor": [200, 200],
+    "num_hiddens_critic": [50, 50],
+    "num_hiddens_actor": [50, 50],
     "lr_values_critic": [1e-3, 1e-4, 1e-5],
     "lr_boundaries_critic": [20000, 30000],
     "lr_values_actor": [1e-3, 1e-4, 1e-5],
     "lr_boundaries_actor": [20000, 30000],
-    "num_iterations": 2,
+    "num_iterations": 20000,
     "batch_size": 1024,
     "valid_size": 1024,
-    "logging_frequency": 100,
+    "logging_frequency": 1000,
     "dtype": "float64",
     "verbose": true
   },
   "train_config":{
     "sample_type": "normal",
-    "scheme": "adaptive",
+    "scheme": "naive",
     "TD_type": "TD1",
     "train": "actor-critic"
   }
